@@ -1,0 +1,94 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  pythonVersion: '3.11'
+
+stages:
+  - stage: Validate
+    displayName: Validate request and security gates
+    jobs:
+      - job: RequestChecks
+        displayName: Validate self-service request
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: $(pythonVersion)
+
+          - script: python -m pip install --disable-pip-version-check pyyaml jsonschema
+            displayName: Install validation dependencies
+
+          - script: python scripts/validate_request.py
+            displayName: Validate request schema
+
+          - script: |
+              for request in onboarding/infra-requests/*.yaml; do
+                python scripts/check_request_guardrails.py "$request"
+              done
+            displayName: Enforce request security gates
+
+          - script: |
+              terraform fmt -check -recursive terraform
+            displayName: Check Terraform formatting
+
+          - script: |
+              terraform init -backend=false terraform/modules/basic-infra
+              terraform validate terraform/modules/basic-infra
+            displayName: Validate approved Terraform catalog
+
+          - script: |
+              docker run --rm -v "$(Build.SourcesDirectory):/src" aquasec/trivy:latest \
+                config --exit-code 1 --severity HIGH,CRITICAL /src/terraform
+            displayName: Run infrastructure security scan
+
+  - stage: Dev
+    displayName: Provision development resources
+    dependsOn: Validate
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: DevProvision
+        environment: self-service-dev
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - script: echo "Run the approved basic-infra plan for the dev request"
+                  displayName: Apply approved dev plan
+
+  - stage: Test
+    displayName: Provision test resources
+    dependsOn: Dev
+    condition: succeeded()
+    jobs:
+      - deployment: TestProvision
+        environment: self-service-test
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - script: echo "Run the approved basic-infra plan for the test request"
+                  displayName: Apply approved test plan
+
+  - stage: Prod
+    displayName: Provision production resources
+    dependsOn: Test
+    condition: succeeded()
+    jobs:
+      - deployment: ProdProvision
+        environment: self-service-prod
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - script: echo "Run the approved basic-infra plan for the prod request"
+                  displayName: Apply approved production plan
