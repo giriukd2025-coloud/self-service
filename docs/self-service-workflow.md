@@ -21,8 +21,18 @@ Configure these Azure DevOps environments before enabling deployment:
 | Environment | Approval gate | Deployment trigger |
 |---|---|---|
 | `self-service-dev` | No manual approval; validation stage must pass | Merge to `main` |
-| `self-service-test` | `platform-team` | Successful dev deployment |
-| `self-service-prod` | `platform-team` and `data-owner` | Successful test deployment |
+| `self-service-test` | `platform-team` | Successful validation |
+| `self-service-prod` | `platform-team` and `data-owner` | Successful validation |
+
+Before running the pipeline, replace the `REPLACE_WITH_*` variables in
+`pipelines/intake-pipeline.yml` with an Azure service connection and an existing
+Azure Storage account/container for Terraform state. The state account should
+use private access and RBAC; the pipeline identity needs `Storage Blob Data
+Contributor` on the state container and `Contributor` on the target scope.
+
+Set `requestFile` and `requestEnvironment` for the request being promoted. Only
+the matching environment stage runs, so a development request cannot be applied
+to test or production accidentally.
 
 Approvals belong to the environment, not the YAML request. The request declares
 which groups are expected, while the environment remains the enforcement point.

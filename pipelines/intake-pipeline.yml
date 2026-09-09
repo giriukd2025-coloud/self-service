@@ -13,6 +13,13 @@ pool:
 
 variables:
   pythonVersion: '3.11'
+  requestFile: onboarding/infra-requests/sales-analytics-basics.yaml
+  requestEnvironment: dev
+  azureServiceConnection: REPLACE_WITH_AZURE_SERVICE_CONNECTION
+  terraformStateResourceGroup: REPLACE_WITH_TF_STATE_RESOURCE_GROUP
+  terraformStateStorageAccount: REPLACE_WITH_TF_STATE_STORAGE_ACCOUNT
+  terraformStateContainer: tfstate
+  terraformStateKey: self-service-platform.tfstate
 
 stages:
   - stage: Validate
@@ -42,8 +49,8 @@ stages:
             displayName: Check Terraform formatting
 
           - script: |
-              terraform init -backend=false terraform/modules/basic-infra
-              terraform validate terraform/modules/basic-infra
+              terraform init -backend=false terraform
+              terraform validate terraform
             displayName: Validate approved Terraform catalog
 
           - script: |
@@ -54,7 +61,7 @@ stages:
   - stage: Dev
     displayName: Provision development resources
     dependsOn: Validate
-    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'), eq(variables['requestEnvironment'], 'dev'))
     jobs:
       - deployment: DevProvision
         environment: self-service-dev
@@ -62,13 +69,33 @@ stages:
           runOnce:
             deploy:
               steps:
-                - script: echo "Run the approved basic-infra plan for the dev request"
-                  displayName: Apply approved dev plan
+                - checkout: self
+                - task: TerraformInstaller@1
+                  inputs:
+                    terraformVersion: '1.9.8'
+                - task: AzureCLI@2
+                  displayName: Plan and apply approved dev request
+                  inputs:
+                    azureSubscription: $(azureServiceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      python -m pip install --disable-pip-version-check pyyaml
+                      python scripts/render_request_tfvars.py "$(requestFile)" --environment dev --output terraform/dev.auto.tfvars
+                      subscription_id="$(az account show --query id -o tsv)"
+                      terraform -chdir=terraform init \
+                        -backend-config="resource_group_name=$(terraformStateResourceGroup)" \
+                        -backend-config="storage_account_name=$(terraformStateStorageAccount)" \
+                        -backend-config="container_name=$(terraformStateContainer)" \
+                        -backend-config="key=$(terraformStateKey)-dev"
+                      terraform -chdir=terraform plan -var="subscription_id=$subscription_id" -out=dev.tfplan
+                      terraform -chdir=terraform apply -auto-approve dev.tfplan
 
   - stage: Test
     displayName: Provision test resources
-    dependsOn: Dev
-    condition: succeeded()
+    dependsOn: Validate
+    condition: and(succeeded(), eq(variables['requestEnvironment'], 'test'))
     jobs:
       - deployment: TestProvision
         environment: self-service-test
@@ -76,13 +103,33 @@ stages:
           runOnce:
             deploy:
               steps:
-                - script: echo "Run the approved basic-infra plan for the test request"
-                  displayName: Apply approved test plan
+                - checkout: self
+                - task: TerraformInstaller@1
+                  inputs:
+                    terraformVersion: '1.9.8'
+                - task: AzureCLI@2
+                  displayName: Plan and apply approved test request
+                  inputs:
+                    azureSubscription: $(azureServiceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      python -m pip install --disable-pip-version-check pyyaml
+                      python scripts/render_request_tfvars.py "$(requestFile)" --environment test --output terraform/test.auto.tfvars
+                      subscription_id="$(az account show --query id -o tsv)"
+                      terraform -chdir=terraform init \
+                        -backend-config="resource_group_name=$(terraformStateResourceGroup)" \
+                        -backend-config="storage_account_name=$(terraformStateStorageAccount)" \
+                        -backend-config="container_name=$(terraformStateContainer)" \
+                        -backend-config="key=$(terraformStateKey)-test"
+                      terraform -chdir=terraform plan -var="subscription_id=$subscription_id" -out=test.tfplan
+                      terraform -chdir=terraform apply -auto-approve test.tfplan
 
   - stage: Prod
     displayName: Provision production resources
-    dependsOn: Test
-    condition: succeeded()
+    dependsOn: Validate
+    condition: and(succeeded(), eq(variables['requestEnvironment'], 'prod'))
     jobs:
       - deployment: ProdProvision
         environment: self-service-prod
@@ -90,5 +137,25 @@ stages:
           runOnce:
             deploy:
               steps:
-                - script: echo "Run the approved basic-infra plan for the prod request"
-                  displayName: Apply approved production plan
+                - checkout: self
+                - task: TerraformInstaller@1
+                  inputs:
+                    terraformVersion: '1.9.8'
+                - task: AzureCLI@2
+                  displayName: Plan and apply approved production request
+                  inputs:
+                    azureSubscription: $(azureServiceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      python -m pip install --disable-pip-version-check pyyaml
+                      python scripts/render_request_tfvars.py "$(requestFile)" --environment prod --output terraform/prod.auto.tfvars
+                      subscription_id="$(az account show --query id -o tsv)"
+                      terraform -chdir=terraform init \
+                        -backend-config="resource_group_name=$(terraformStateResourceGroup)" \
+                        -backend-config="storage_account_name=$(terraformStateStorageAccount)" \
+                        -backend-config="container_name=$(terraformStateContainer)" \
+                        -backend-config="key=$(terraformStateKey)-prod"
+                      terraform -chdir=terraform plan -var="subscription_id=$subscription_id" -out=prod.tfplan
+                      terraform -chdir=terraform apply -auto-approve prod.tfplan
