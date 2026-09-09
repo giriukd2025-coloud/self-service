@@ -1,0 +1,35 @@
+# Self-service request for basic Azure infrastructure.
+# Copy this file, update the values, and submit the copy in a pull request.
+
+requestName: sales-analytics-basics
+owner: jagadeesh.s@company.com
+costCenter: CC-4021
+environment: dev
+
+resources:
+  - type: resource-group
+    name: rg-sales-analytics-dev
+
+  - type: storage-account
+    name: stsalesanalyticsdev
+    tier: Standard_LRS
+    resourceGroup: rg-sales-analytics-dev
+
+  - type: key-vault
+    name: kv-sales-analytics-dev
+    resourceGroup: rg-sales-analytics-dev
+    softDeleteRetentionDays: 7
+
+network:
+  # Consume an existing private VNet and subnet owned by the infrastructure team.
+  vnetName: vnet-fabric-dev-eus
+  subnetName: snet-fabric-data
+
+approvals:
+  test: platform-team
+  prod: platform-team+data-owner
+
+securityGates:
+  requireTfsecPass: true
+  requireNoPublicNetworkAccess: true
+  requireTaggedCostCenter: true
